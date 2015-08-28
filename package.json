@@ -1,0 +1,30 @@
+{
+  "name": "hyperfused",
+  "version": "0.0.0",
+  "description": "A networked fuse mounting daemon that runs over tcp or stdin/stdout.",
+  "directories": {
+    "test": "tests"
+  },
+  "bin": {
+    "hyperfused": "./hyperfused"
+  },
+  "scripts": {
+    "test": "make test",
+    "install": "make"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mafintosh/hyperfused.git"
+  },
+  "keywords": [
+    "fuse",
+    "network",
+    "daemon"
+  ],
+  "author": "Mathias Buus (@mafintosh)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mafintosh/hyperfused/issues"
+  },
+  "homepage": "https://github.com/mafintosh/hyperfused#readme"
+}

@@ -523,7 +523,7 @@ static int bitfield_get (uint8_t *bitfield, int index) {
 
 int main (int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: hyperfuse [mountpoint] [host:port]\n");
+    fprintf(stderr, "Usage: hyperfused [mountpoint] [host:port]\n");
     exit(1);
   }
 
