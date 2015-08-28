@@ -7,7 +7,7 @@ CC = gcc -std=c99
 all: hyperfused
 
 hyperfused: $(SRC_C) $(SRC_H) src/hyperfused.c
-	$(CC) -O3 -pthread $(SRC_C) src/hyperfused.c $(FUSE_OPTS) -o $@
+	$(CC) -O3 -Ipthread $(SRC_C) src/hyperfused.c $(FUSE_OPTS) -o $@
 
 install: hyperfused
 	cp hyperfused $(PREFIX)/bin/hyperfused

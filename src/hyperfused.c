@@ -79,43 +79,70 @@ static int socket_error () {
   return -1;
 }
 
+static void rpc_parse_statfs (rpc_t *req, char *frame, uint32_t frame_len) {
+  uint32_t val;
+  struct statvfs *st = (struct statvfs *) req->result;
+  frame = read_uint32(frame, &val);
+  st->f_bsize = val;
+  frame = read_uint32(frame, &val);
+  st->f_frsize = val;
+  frame = read_uint32(frame, &val);
+  st->f_blocks = val;
+  frame = read_uint32(frame, &val);
+  st->f_bfree = val;
+  frame = read_uint32(frame, &val);
+  st->f_bavail = val;
+  frame = read_uint32(frame, &val);
+  st->f_files = val;
+  frame = read_uint32(frame, &val);
+  st->f_ffree = val;
+  frame = read_uint32(frame, &val);
+  st->f_favail = val;
+  frame = read_uint32(frame, &val);
+  st->f_fsid = val;
+  frame = read_uint32(frame, &val);
+  st->f_flag = val;
+  frame = read_uint32(frame, &val);
+  st->f_namemax = val;
+}
+
 inline static void rpc_parse_getattr (rpc_t *req, char *frame, uint32_t frame_len) {
-  uint32_t val_32;
+  uint32_t val;
   struct stat *st = (struct stat *) req->result;
-  frame = read_uint32(frame, &val_32);
-  st->st_dev = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_mode = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_nlink = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_uid = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_gid = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_rdev = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_blksize = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_ino = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_size = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_blocks = val_32;
+  frame = read_uint32(frame, &val);
+  st->st_dev = val;
+  frame = read_uint32(frame, &val);
+  st->st_mode = val;
+  frame = read_uint32(frame, &val);
+  st->st_nlink = val;
+  frame = read_uint32(frame, &val);
+  st->st_uid = val;
+  frame = read_uint32(frame, &val);
+  st->st_gid = val;
+  frame = read_uint32(frame, &val);
+  st->st_rdev = val;
+  frame = read_uint32(frame, &val);
+  st->st_blksize = val;
+  frame = read_uint32(frame, &val);
+  st->st_ino = val;
+  frame = read_uint32(frame, &val);
+  st->st_size = val;
+  frame = read_uint32(frame, &val);
+  st->st_blocks = val;
 #ifdef __APPLE__
-  frame = read_uint32(frame, &val_32);
-  st->st_atimespec.tv_sec = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_mtimespec.tv_sec = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_ctimespec.tv_sec = val_32;
+  frame = read_uint32(frame, &val);
+  st->st_atimespec.tv_sec = val;
+  frame = read_uint32(frame, &val);
+  st->st_mtimespec.tv_sec = val;
+  frame = read_uint32(frame, &val);
+  st->st_ctimespec.tv_sec = val;
 #else
-  frame = read_uint32(frame, &val_32);
-  st->st_atime = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_mtime = val_32;
-  frame = read_uint32(frame, &val_32);
-  st->st_ctime = val_32;
+  frame = read_uint32(frame, &val);
+  st->st_atime = val;
+  frame = read_uint32(frame, &val);
+  st->st_mtime = val;
+  frame = read_uint32(frame, &val);
+  st->st_ctime = val;
 #endif
 }
 
@@ -181,6 +208,12 @@ inline static int rpc_request (rpc_t *req) {
       }
       return ret;
     }
+    case HYPERFUSE_MKNOD:
+    case HYPERFUSE_FTRUNCATE:
+    case HYPERFUSE_FLUSH:
+    case HYPERFUSE_FSYNC:
+    case HYPERFUSE_FSYNCDIR:
+    case HYPERFUSE_ACCESS:
     case HYPERFUSE_SYMLINK:
     case HYPERFUSE_RENAME:
     case HYPERFUSE_UTIMENS:
@@ -203,6 +236,7 @@ inline static int rpc_request (rpc_t *req) {
   if (ret < 0) return ret;
 
   switch (req->method) {
+    case HYPERFUSE_FGETATTR:
     case HYPERFUSE_GETATTR: {
       rpc_parse_getattr(req, tmp, frame_size);
       break;
@@ -221,6 +255,12 @@ inline static int rpc_request (rpc_t *req) {
     case HYPERFUSE_CREATE:
     case HYPERFUSE_OPEN: {
       rpc_parse_fd(req, tmp, frame_size);
+      break;
+    }
+
+    case HYPERFUSE_STATFS: {
+      rpc_parse_statfs(req, tmp, frame_size);
+      break;
     }
   }
 
@@ -495,6 +535,113 @@ static int hyperfuse_link (const char *path, const char *link) {
   return rpc_request(&req);
 }
 
+static int hyperfuse_access (const char *path, int mode) {
+  WITH_PATH(path, 2);
+
+  rpc_t req = {
+    .method = HYPERFUSE_ACCESS,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_uint16(buf_offset, mode);
+  return rpc_request(&req);
+}
+
+static int hyperfuse_statfs (const char *path, struct statvfs *statfs) {
+  WITH_PATH(path, 0);
+
+  rpc_t req = {
+    .method = HYPERFUSE_STATFS,
+    .buffer = buf,
+    .buffer_length = buf_len,
+    .result = statfs
+  };
+
+  return rpc_request(&req);
+}
+
+static int hyperfuse_fgetattr (const char *path, struct stat *stat, struct fuse_file_info *info) {
+  WITH_PATH(path, 2);
+
+  rpc_t req = {
+    .method = HYPERFUSE_FGETATTR,
+    .buffer = buf,
+    .buffer_length = buf_len,
+    .result = stat
+  };
+
+  buf_offset = write_uint16(buf_offset, info->fh);
+  return rpc_request(&req);
+}
+
+static int hyperfuse_flush (const char *path, struct fuse_file_info *info) {
+  WITH_PATH(path, 2);
+
+  rpc_t req = {
+    .method = HYPERFUSE_FLUSH,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_uint16(buf_offset, info->fh);
+  return rpc_request(&req);
+}
+
+static int hyperfuse_fsync (const char *path, int datasync, struct fuse_file_info *info) {
+  WITH_PATH(path, 2 + 2);
+
+  rpc_t req = {
+    .method = HYPERFUSE_FSYNC,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_uint16(buf_offset, info->fh);
+  buf_offset = write_uint16(buf_offset, datasync);
+  return rpc_request(&req);
+}
+
+static int hyperfuse_fsyncdir (const char *path, int datasync, struct fuse_file_info *info) {
+  WITH_PATH(path, 2 + 2);
+
+  rpc_t req = {
+    .method = HYPERFUSE_FSYNCDIR,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_uint16(buf_offset, info->fh);
+  buf_offset = write_uint16(buf_offset, datasync);
+  return rpc_request(&req);
+}
+
+static int hyperfuse_ftruncate (const char *path, off_t size, struct fuse_file_info *info) {
+  WITH_PATH(path, 2 + 4);
+
+  rpc_t req = {
+    .method = HYPERFUSE_FTRUNCATE,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_uint16(buf_offset, info->fh);
+  buf_offset = write_uint32(buf_offset, size);
+  return rpc_request(&req);
+}
+
+static int hyperfuse_mknod (const char *path, mode_t mode, dev_t dev) {
+  WITH_PATH(path, 2 + 4);
+  rpc_t req = {
+    .method = HYPERFUSE_MKNOD,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_uint16(buf_offset, mode);
+  buf_offset = write_uint32(buf_offset, dev);
+  return rpc_request(&req);
+}
 
 static int connect (char *addr) {
   if (!strcmp(addr, "-")) {
@@ -570,7 +717,15 @@ int main (int argc, char **argv) {
     .rename = bitfield_get(methods, HYPERFUSE_RENAME) ? hyperfuse_rename : NULL,
     .symlink = bitfield_get(methods, HYPERFUSE_SYMLINK) ? hyperfuse_symlink : NULL,
     .readlink = bitfield_get(methods, HYPERFUSE_READLINK) ? hyperfuse_readlink : NULL,
-    .link = bitfield_get(methods, HYPERFUSE_LINK) ? hyperfuse_link : NULL
+    .link = bitfield_get(methods, HYPERFUSE_LINK) ? hyperfuse_link : NULL,
+    .access = bitfield_get(methods, HYPERFUSE_ACCESS) ? hyperfuse_access : NULL,
+    .statfs = bitfield_get(methods, HYPERFUSE_STATFS) ? hyperfuse_statfs : NULL,
+    .fgetattr = bitfield_get(methods, HYPERFUSE_FGETATTR) ? hyperfuse_fgetattr : NULL,
+    .flush = bitfield_get(methods, HYPERFUSE_FLUSH) ? hyperfuse_flush : NULL,
+    .fsync = bitfield_get(methods, HYPERFUSE_FSYNC) ? hyperfuse_fsync : NULL,
+    .fsyncdir = bitfield_get(methods, HYPERFUSE_FSYNCDIR) ? hyperfuse_fsyncdir : NULL,
+    .ftruncate = bitfield_get(methods, HYPERFUSE_FTRUNCATE) ? hyperfuse_ftruncate : NULL,
+    .mknod = bitfield_get(methods, HYPERFUSE_MKNOD) ? hyperfuse_mknod : NULL,
   };
 
   struct fuse_args args = FUSE_ARGS_INIT(argc - 2, argv + 2);
