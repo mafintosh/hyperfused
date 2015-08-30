@@ -707,7 +707,7 @@ static int hyperfuse_getxattr (const char *path, const char *name, char *value, 
   return rpc_request(&req);
 }
 #else
-static int bindings_setxattr (const char *path, const char *name, const char *value, size_t size, int flags) {
+static int hyperfuse_setxattr (const char *path, const char *name, const char *value, size_t size, int flags) {
   uint16_t name_len = strlen(name);
   WITH_PATH(path, 2 + name_len + 1 + 2 + 4 + size);
   rpc_t req = {
