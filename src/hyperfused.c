@@ -208,6 +208,9 @@ inline static int rpc_request (rpc_t *req) {
       }
       return ret;
     }
+    case HYPERFUSE_RELEASEDIR:
+    case HYPERFUSE_GETXATTR:
+    case HYPERFUSE_SETXATTR:
     case HYPERFUSE_MKNOD:
     case HYPERFUSE_FTRUNCATE:
     case HYPERFUSE_FLUSH:
@@ -252,6 +255,7 @@ inline static int rpc_request (rpc_t *req) {
       break;
     }
 
+    case HYPERFUSE_OPENDIR:
     case HYPERFUSE_CREATE:
     case HYPERFUSE_OPEN: {
       rpc_parse_fd(req, tmp, frame_size);
@@ -317,6 +321,20 @@ static int hyperfuse_open (const char *path, struct fuse_file_info *info) {
 
   rpc_t req = {
     .method = HYPERFUSE_OPEN,
+    .buffer = buf,
+    .buffer_length = buf_len,
+    .info = info
+  };
+
+  buf_offset = write_uint16(buf_offset, info->flags);
+  return rpc_request(&req);
+}
+
+static int hyperfuse_opendir (const char *path, struct fuse_file_info *info) {
+  WITH_PATH(path, 2);
+
+  rpc_t req = {
+    .method = HYPERFUSE_OPENDIR,
     .buffer = buf,
     .buffer_length = buf_len,
     .info = info
@@ -428,6 +446,19 @@ static int hyperfuse_release (const char *path, struct fuse_file_info *info) {
 
   rpc_t req = {
     .method = HYPERFUSE_RELEASE,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_uint16(buf_offset, info->fh);
+  return rpc_request(&req);
+}
+
+static int hyperfuse_releasedir (const char *path, struct fuse_file_info *info) {
+  WITH_PATH(path, 2);
+
+  rpc_t req = {
+    .method = HYPERFUSE_RELEASEDIR,
     .buffer = buf,
     .buffer_length = buf_len
   };
@@ -643,6 +674,72 @@ static int hyperfuse_mknod (const char *path, mode_t mode, dev_t dev) {
   return rpc_request(&req);
 }
 
+#ifdef __APPLE__
+static int hyperfuse_setxattr (const char *path, const char *name, const char *value, size_t size, int flags, uint32_t position) {
+  uint16_t name_len = strlen(name);
+  WITH_PATH(path, 2 + name_len + 1 + 2 + 4 + size);
+  rpc_t req = {
+    .method = HYPERFUSE_SETXATTR,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_string(buf_offset, (char *) name, name_len);
+  buf_offset = write_uint16(buf_offset, flags);
+  buf_offset = write_uint32(buf_offset, position);
+  buf_offset = write_buffer(buf_offset, (char *) value, size);
+  return rpc_request(&req);
+}
+
+static int hyperfuse_getxattr (const char *path, const char *name, char *value, size_t size, uint32_t position) {
+  uint16_t name_len = strlen(name);
+  WITH_PATH(path, 2 + name_len + 1 + 2 + 4 + size);
+
+  rpc_t req = {
+    .method = HYPERFUSE_GETXATTR,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_string(buf_offset, (char *) name, name_len);
+  buf_offset = write_uint32(buf_offset, position);
+  buf_offset = write_buffer(buf_offset, (char *) value, size);
+  return rpc_request(&req);
+}
+#else
+static int bindings_setxattr (const char *path, const char *name, const char *value, size_t size, int flags) {
+  uint16_t name_len = strlen(name);
+  WITH_PATH(path, 2 + name_len + 1 + 2 + 4 + size);
+  rpc_t req = {
+    .method = HYPERFUSE_SETXATTR,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_string(buf_offset, (char *) name, name_len);
+  buf_offset = write_uint16(buf_offset, flags);
+  buf_offset = write_uint32(buf_offset, 0);
+  buf_offset = write_buffer(buf_offset, (char *) value, size);
+  return rpc_request(&req);
+}
+
+static int hyperfuse_getxattr (const char *path, const char *name, char *value, size_t size) {
+  uint16_t name_len = strlen(name);
+  WITH_PATH(path, 2 + name_len + 1 + 2 + 4 + size);
+
+  rpc_t req = {
+    .method = HYPERFUSE_GETXATTR,
+    .buffer = buf,
+    .buffer_length = buf_len
+  };
+
+  buf_offset = write_string(buf_offset, (char *) name, name_len);
+  buf_offset = write_uint32(buf_offset, 0);
+  buf_offset = write_buffer(buf_offset, (char *) value, size);
+  return rpc_request(&req);
+}
+#endif
+
 static int connect (char *addr) {
   if (!strcmp(addr, "-")) {
     rpc_fd_in = 0;
@@ -726,6 +823,10 @@ int main (int argc, char **argv) {
     .fsyncdir = bitfield_get(methods, HYPERFUSE_FSYNCDIR) ? hyperfuse_fsyncdir : NULL,
     .ftruncate = bitfield_get(methods, HYPERFUSE_FTRUNCATE) ? hyperfuse_ftruncate : NULL,
     .mknod = bitfield_get(methods, HYPERFUSE_MKNOD) ? hyperfuse_mknod : NULL,
+    .setxattr = bitfield_get(methods, HYPERFUSE_SETXATTR) ? hyperfuse_setxattr : NULL,
+    .getxattr = bitfield_get(methods, HYPERFUSE_GETXATTR) ? hyperfuse_getxattr : NULL,
+    .opendir = bitfield_get(methods, HYPERFUSE_OPENDIR) ? hyperfuse_opendir : NULL,
+    .releasedir = bitfield_get(methods, HYPERFUSE_RELEASEDIR) ? hyperfuse_releasedir : NULL
   };
 
   struct fuse_args args = FUSE_ARGS_INIT(argc - 2, argv + 2);
