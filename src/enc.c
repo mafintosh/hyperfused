@@ -36,6 +36,12 @@ inline char *read_uint32 (char *buf, uint32_t *val) {
   return buf + 4;
 }
 
+inline char *write_int32 (char *buf, int32_t val) {
+  int32_t tmp = ntohl(val);
+  memcpy(buf, &tmp, 4);
+  return buf + 4;
+}
+
 inline char *read_int32 (char *buf, int32_t *val) {
   int32_t tmp = ntohl(*((int32_t *) buf));
   memcpy(val, &tmp, 4);

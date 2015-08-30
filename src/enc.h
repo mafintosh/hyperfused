@@ -13,6 +13,7 @@ char *read_uint16 (char *buf, uint16_t *val);
 char *write_uint32 (char *buf, uint32_t val);
 char *read_uint32 (char *buf, uint32_t *val);
 
+char *write_int32 (char *buf, int32_t val);
 char *read_int32 (char *buf, int32_t *val);
 
 char *write_string (char *buf, char *str, uint16_t str_len);
