@@ -49,10 +49,11 @@
 #include <fuse_lowlevel.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/mount.h>
-#include <sys/stat.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include "socket.h"
 #include "enc.h"
