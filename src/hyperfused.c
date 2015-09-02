@@ -43,6 +43,7 @@
   char *buf_offset = (char *) &buf + 7; \
   buf_offset = write_string(buf_offset, (char *) path, path_len);
 
+#include <pthread.h>
 #include <fuse.h>
 #include <fuse_opt.h>
 #include <fuse_lowlevel.h>
@@ -51,37 +52,57 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "socket.h"
 #include "enc.h"
 #include "id_map.h"
-
-#include <unistd.h>
 
 static int rpc_fd_out;
 static int rpc_fd_in;
 static id_map_t ids;
 static char* mnt;
 static struct stat mnt_st;
+static pthread_t rpc_loop_thread;
+
+static pthread_mutex_t write_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t read_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t read_mutex_cond = PTHREAD_COND_INITIALIZER;
 
 typedef struct {
-  uint8_t method;
-  void *result;
+  int resolved;
+  int return_value;
+
   char *buffer;
   uint32_t buffer_length;
+
+  uint8_t method;
+  void *data;
+
   struct fuse_file_info *info;
   fuse_fill_dir_t filler; // for readdir
 } rpc_t;
 
-static int socket_error () {
+static int on_critical_error () {
   fprintf(stderr, "Connection error. Exiting...\n");
   exit(-3);
   return -1;
 }
 
+static void fusermount (char *path) {
+#ifdef __APPLE__
+  char *argv[] = {(char *) "umount", path, NULL};
+#else
+  char *argv[] = {(char *) "fusermount", (char *) "-q", (char *) "-u", path, NULL};
+#endif
+  pid_t cpid = vfork();
+  if (cpid > 0) waitpid(cpid, NULL, 0);
+  else execvp(argv[0], argv);
+}
+
 static void rpc_parse_statfs (rpc_t *req, char *frame, uint32_t frame_len) {
   uint32_t val;
-  struct statvfs *st = (struct statvfs *) req->result;
+  struct statvfs *st = (struct statvfs *) req->data;
   frame = read_uint32(frame, &val);
   st->f_bsize = val;
   frame = read_uint32(frame, &val);
@@ -108,7 +129,7 @@ static void rpc_parse_statfs (rpc_t *req, char *frame, uint32_t frame_len) {
 
 inline static void rpc_parse_getattr (rpc_t *req, char *frame, uint32_t frame_len) {
   uint32_t val;
-  struct stat *st = (struct stat *) req->result;
+  struct stat *st = (struct stat *) req->data;
   frame = read_uint32(frame, &val);
   st->st_dev = val;
   frame = read_uint32(frame, &val);
@@ -150,7 +171,7 @@ inline static void rpc_parse_readlink (rpc_t *req, char *frame, uint32_t frame_l
   uint16_t str_len;
   char *str;
   read_string(frame, &str, &str_len);
-  memcpy(req->result, str, str_len + 1);
+  memcpy(req->data, str, str_len + 1);
 }
 
 inline static void rpc_parse_readdir (rpc_t *req, char *frame, uint32_t frame_len) {
@@ -160,7 +181,7 @@ inline static void rpc_parse_readdir (rpc_t *req, char *frame, uint32_t frame_le
 
   while (frame - offset < frame_len) {
     frame = read_string(frame, &str, &str_len);
-    req->filler(req->result, str, NULL, 0);
+    req->filler(req->data, str, NULL, 0);
   }
 }
 
@@ -170,105 +191,103 @@ inline static void rpc_parse_fd (rpc_t *req, char *frame, uint32_t frame_len) {
   req->info->fh = fd;
 }
 
-inline static int rpc_request (rpc_t *req) {
-  char *tmp = req->buffer;
-  uint16_t send_id = id_map_alloc(&ids, req);
-
-  // write header
-  tmp = write_uint32(tmp, req->buffer_length - 4);
-  tmp = write_uint16(tmp, send_id);
-  tmp = write_uint8(tmp, req->method);
-
-  // write request
-  if (socket_write(rpc_fd_out, req->buffer, req->buffer_length) < 0) return socket_error();
-
-  // read a response
+inline static void rpc_read_next () {
   char header[10];
-  tmp = (char *) &header;
-  if (socket_read(rpc_fd_in, tmp, 10) < 0) return socket_error();
+  char *buf_offset = (char *) &header;
+
+  if (socket_read(rpc_fd_in, buf_offset, 10) < 0) on_critical_error();
 
   uint32_t frame_size;
   uint16_t recv_id;
   int32_t ret;
 
-  tmp = read_uint32(tmp, &frame_size);
-  tmp = read_uint16(tmp, &recv_id);
-  tmp = read_int32(tmp, &ret);
+  buf_offset = read_uint32(buf_offset, &frame_size);
+  buf_offset = read_uint16(buf_offset, &recv_id);
+  buf_offset = read_int32(buf_offset, &ret);
 
-  // fprintf(stderr, "frame_size is %u, recv_id is %u, return value is %u\n", frame_size, recv_id, ret);
+  rpc_t *req = id_map_get(&ids, recv_id);
 
-  id_map_free(&ids, send_id);
+  req->return_value = ret;
+  req->resolved = 1;
 
   frame_size -= 6;
 
-  switch (req->method) {
-    case HYPERFUSE_READ: {
-      if (frame_size) {
-        if (socket_read(rpc_fd_in, req->result, frame_size) < 0) return socket_error();
-      }
-      return ret;
-    }
-    case HYPERFUSE_RELEASEDIR:
-    case HYPERFUSE_GETXATTR:
-    case HYPERFUSE_SETXATTR:
-    case HYPERFUSE_MKNOD:
-    case HYPERFUSE_FTRUNCATE:
-    case HYPERFUSE_FLUSH:
-    case HYPERFUSE_FSYNC:
-    case HYPERFUSE_FSYNCDIR:
-    case HYPERFUSE_ACCESS:
-    case HYPERFUSE_SYMLINK:
-    case HYPERFUSE_RENAME:
-    case HYPERFUSE_UTIMENS:
-    case HYPERFUSE_RMDIR:
-    case HYPERFUSE_MKDIR:
-    case HYPERFUSE_RELEASE:
-    case HYPERFUSE_CHOWN:
-    case HYPERFUSE_CHMOD:
-    case HYPERFUSE_WRITE:
-    case HYPERFUSE_UNLINK:
-    case HYPERFUSE_TRUNCATE: {
-      return ret;
-    }
+  if (req->method == HYPERFUSE_READ && frame_size) {
+    if (socket_read(rpc_fd_in, req->data, frame_size) < 0) on_critical_error();
+    return;
   }
 
-  char rem[frame_size];
-  tmp = (char *) &rem;
-  if (socket_read(rpc_fd_in, tmp, frame_size) < 0) return socket_error();
+  if (!frame_size) return;
 
-  if (ret < 0) return ret;
+  char buf_remaining[frame_size];
+  buf_offset = (char *) &buf_remaining;
+  if (socket_read(rpc_fd_in, buf_offset, frame_size) < 0) on_critical_error();
+
+  if (ret < 0) return;
 
   switch (req->method) {
     case HYPERFUSE_FGETATTR:
     case HYPERFUSE_GETATTR: {
-      rpc_parse_getattr(req, tmp, frame_size);
+      rpc_parse_getattr(req, buf_offset, frame_size);
       break;
     }
 
     case HYPERFUSE_READDIR: {
-      rpc_parse_readdir(req, tmp, frame_size);
+      rpc_parse_readdir(req, buf_offset, frame_size);
       break;
     }
 
     case HYPERFUSE_READLINK: {
-      rpc_parse_readlink(req, tmp, frame_size);
+      rpc_parse_readlink(req, buf_offset, frame_size);
       break;
     }
 
     case HYPERFUSE_OPENDIR:
     case HYPERFUSE_CREATE:
     case HYPERFUSE_OPEN: {
-      rpc_parse_fd(req, tmp, frame_size);
+      rpc_parse_fd(req, buf_offset, frame_size);
       break;
     }
 
     case HYPERFUSE_STATFS: {
-      rpc_parse_statfs(req, tmp, frame_size);
+      rpc_parse_statfs(req, buf_offset, frame_size);
       break;
     }
   }
+}
 
-  return 0;
+static void *rpc_loop (void *arg) {
+  while (1) {
+    rpc_read_next();
+    pthread_mutex_lock(&read_mutex);
+    pthread_cond_broadcast(&read_mutex_cond);
+    pthread_mutex_unlock(&read_mutex);
+  }
+  return NULL;
+}
+
+inline static int rpc_request (rpc_t *req) {
+  req->resolved = 0;
+  char *buf_offset = req->buffer;
+  uint16_t send_id = id_map_alloc(&ids, req);
+
+  // write header
+  buf_offset = write_uint32(buf_offset, req->buffer_length - 4);
+  buf_offset = write_uint16(buf_offset, send_id);
+  buf_offset = write_uint8(buf_offset, req->method);
+
+  // write request
+
+  pthread_mutex_lock(&write_mutex);
+  if (socket_write(rpc_fd_out, req->buffer, req->buffer_length) < 0) on_critical_error();
+  pthread_mutex_unlock(&write_mutex);
+
+  pthread_mutex_lock(&read_mutex);
+  while (!req->resolved) pthread_cond_wait(&read_mutex_cond, &read_mutex);
+  pthread_mutex_unlock(&read_mutex);
+
+  id_map_free(&ids, send_id);
+  return req->return_value;
 }
 
 static void* hyperfuse_init (struct fuse_conn_info *conn) {
@@ -294,7 +313,7 @@ static int hyperfuse_getattr (const char *path, struct stat *st) {
 
   rpc_t req = {
     .method = HYPERFUSE_GETATTR,
-    .result = st,
+    .data = st,
     .buffer = buf,
     .buffer_length = buf_len
   };
@@ -307,7 +326,7 @@ static int hyperfuse_readdir (const char *path, void *fuse_buf, fuse_fill_dir_t 
 
   rpc_t req = {
     .method = HYPERFUSE_READDIR,
-    .result = fuse_buf,
+    .data = fuse_buf,
     .buffer = buf,
     .buffer_length = buf_len,
     .filler = filler
@@ -377,7 +396,7 @@ static int hyperfuse_read (const char *path, char *fuse_buf, size_t len, off_t p
 
   rpc_t req = {
     .method = HYPERFUSE_READ,
-    .result = fuse_buf,
+    .data = fuse_buf,
     .buffer = buf,
     .buffer_length = buf_len
   };
@@ -544,7 +563,7 @@ static int hyperfuse_readlink (const char *path, char *fuse_buf, size_t len) {
 
   rpc_t req = {
     .method = HYPERFUSE_READLINK,
-    .result = fuse_buf,
+    .data = fuse_buf,
     .buffer = buf,
     .buffer_length = buf_len
   };
@@ -586,7 +605,7 @@ static int hyperfuse_statfs (const char *path, struct statvfs *statfs) {
     .method = HYPERFUSE_STATFS,
     .buffer = buf,
     .buffer_length = buf_len,
-    .result = statfs
+    .data = statfs
   };
 
   return rpc_request(&req);
@@ -599,7 +618,7 @@ static int hyperfuse_fgetattr (const char *path, struct stat *stat, struct fuse_
     .method = HYPERFUSE_FGETATTR,
     .buffer = buf,
     .buffer_length = buf_len,
-    .result = stat
+    .data = stat
   };
 
   buf_offset = write_uint16(buf_offset, info->fh);
@@ -771,12 +790,7 @@ int main (int argc, char **argv) {
     exit(1);
   }
 
-#ifdef __APPLE__
-  unmount(argv[1], 0);
-#else
-  umount(argv[1]);
-#endif
-
+  fusermount(argv[1]);
   mnt = realpath(argv[1], mnt);
   char *addr = argv[2];
 
@@ -793,7 +807,7 @@ int main (int argc, char **argv) {
   id_map_init(&ids);
 
   uint8_t methods[5];
-  if (socket_read(rpc_fd_in, (char *) &methods, 5) < 0) return socket_error();
+  if (socket_read(rpc_fd_in, (char *) &methods, 5) < 0) return on_critical_error();
 
   struct fuse_operations ops = {
     .init = bitfield_get(methods, HYPERFUSE_INIT) ? hyperfuse_init : NULL,
@@ -829,6 +843,8 @@ int main (int argc, char **argv) {
     .releasedir = bitfield_get(methods, HYPERFUSE_RELEASEDIR) ? hyperfuse_releasedir : NULL
   };
 
+  pthread_create(&rpc_loop_thread, NULL, &rpc_loop, NULL);
+
   struct fuse_args args = FUSE_ARGS_INIT(argc - 2, argv + 2);
   struct fuse_chan *ch = fuse_mount(mnt, &args);
 
@@ -844,7 +860,7 @@ int main (int argc, char **argv) {
     return -4;
   }
 
-  fuse_loop(fuse);
+  fuse_loop_mt(fuse);
   fuse_unmount(mnt, ch);
   fuse_session_remove_chan(ch);
   fuse_destroy(fuse);
