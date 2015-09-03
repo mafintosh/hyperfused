@@ -31,6 +31,7 @@ inline int socket_read (int fd, char *buf, int length) {
     if (r == 0) return -1;
     if (r < 0) return r;
     length -= r;
+    buf += r;
   }
   return 0;
 }
@@ -41,6 +42,7 @@ inline int socket_write (int fd, char *buf, int length) {
     if (r == 0) return -1;
     if (r < 0) return r;
     length -= r;
+    buf += r;
   }
   return 0;
 }
