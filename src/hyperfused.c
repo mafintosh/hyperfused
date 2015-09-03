@@ -36,6 +36,15 @@
 #define HYPERFUSE_OPENDIR 29
 #define HYPERFUSE_RELEASEDIR 30
 
+#define HYPERFUSE_O_APPEND 8;
+#define HYPERFUSE_O_CREAT 512;
+#define HYPERFUSE_O_EXCL 2048;
+#define HYPERFUSE_O_RDONLY 0;
+#define HYPERFUSE_O_RDWR 2;
+#define HYPERFUSE_O_SYNC 128;
+#define HYPERFUSE_O_TRUNC 1024;
+#define HYPERFUSE_O_WRONLY 1;
+
 #define WITH_PATH(path, len) \
   uint16_t path_len = strlen(path); \
   uint32_t buf_len = 7 + 2 + path_len + 1 + len; \
@@ -336,8 +345,21 @@ static int hyperfuse_readdir (const char *path, void *fuse_buf, fuse_fill_dir_t 
   return rpc_request(&req);
 }
 
+static uint16_t map_flags (int fuse_flags) {
+  uint16_t flags = 0;
+  if (fuse_flags & O_APPEND) flags |= HYPERFUSE_O_APPEND;
+  if (fuse_flags & O_CREAT) flags |= HYPERFUSE_O_CREAT;
+  if (fuse_flags & O_EXCL) flags |= HYPERFUSE_O_EXCL;
+  if (fuse_flags & O_RDONLY) flags |= HYPERFUSE_O_RDONLY;
+  if (fuse_flags & O_RDWR) flags |= HYPERFUSE_O_RDWR;
+  if (fuse_flags & O_SYNC) flags |= HYPERFUSE_O_SYNC;
+  if (fuse_flags & O_TRUNC) flags |= HYPERFUSE_O_TRUNC;
+  if (fuse_flags & O_WRONLY) flags |= HYPERFUSE_O_WRONLY;
+  return flags;
+}
+
 static int hyperfuse_open (const char *path, struct fuse_file_info *info) {
-  WITH_PATH(path, 2);
+  WITH_PATH(path, 4);
 
   rpc_t req = {
     .method = HYPERFUSE_OPEN,
@@ -346,7 +368,7 @@ static int hyperfuse_open (const char *path, struct fuse_file_info *info) {
     .info = info
   };
 
-  buf_offset = write_uint16(buf_offset, info->flags);
+  buf_offset = write_uint16(buf_offset, map_flags(info->flags));
   return rpc_request(&req);
 }
 
@@ -360,7 +382,7 @@ static int hyperfuse_opendir (const char *path, struct fuse_file_info *info) {
     .info = info
   };
 
-  buf_offset = write_uint16(buf_offset, info->flags);
+  buf_offset = write_uint16(buf_offset, map_flags(info->flags));
   return rpc_request(&req);
 }
 
