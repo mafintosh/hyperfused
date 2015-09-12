@@ -106,8 +106,9 @@ static void fusermount (char *path) {
   char *argv[] = {(char *) "fusermount", (char *) "-q", (char *) "-u", path, NULL};
 #endif
   pid_t cpid = fork();
-  if (cpid > 0) waitpid(cpid, NULL, 0);
-  else {
+  if (cpid > 0) {
+    waitpid(cpid, NULL, 0);
+  } else {
     dup2(open("/dev/null", O_WRONLY), 2);
     execvp(argv[0], argv);
   }
