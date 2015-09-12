@@ -79,6 +79,8 @@ static pthread_mutex_t write_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t read_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t read_mutex_cond = PTHREAD_COND_INITIALIZER;
 
+static int MULTITHREADED = 1;
+
 typedef struct {
   int resolved;
   int return_value;
@@ -811,7 +813,25 @@ static int bitfield_get (uint8_t *bitfield, int index) {
   return *(bitfield + b) & mask;
 }
 
+// TODO: move to separate file
+static void parse_argv (int *argc, char ***argv) {
+  for (int i = 1; i < *argc; i++) {
+    char *arg = (*argv)[i];
+    if (arg[0] != '-') {
+      int offset = i - 1;
+      (*argv)[offset] = (*argv)[0];
+      *argc -= offset;
+      *argv += offset;
+      return;
+    }
+    if (strcmp("--no-parallel", arg) == 0) MULTITHREADED = 0;
+    if (strcmp("--parallel", arg) == 0) MULTITHREADED = 1;
+  }
+}
+
 int main (int argc, char **argv) {
+  parse_argv(&argc, &argv);
+
   if (argc < 3) {
     fprintf(stderr, "Usage: hyperfused [mountpoint] [host:port]\n");
     exit(1);
@@ -887,7 +907,9 @@ int main (int argc, char **argv) {
     return -4;
   }
 
-  fuse_loop_mt(fuse);
+  if (MULTITHREADED) fuse_loop_mt(fuse);
+  else fuse_loop(fuse);
+
   fuse_unmount(mnt, ch);
   fuse_session_remove_chan(ch);
   fuse_destroy(fuse);
