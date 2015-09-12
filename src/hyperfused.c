@@ -105,9 +105,12 @@ static void fusermount (char *path) {
 #else
   char *argv[] = {(char *) "fusermount", (char *) "-q", (char *) "-u", path, NULL};
 #endif
-  pid_t cpid = vfork();
+  pid_t cpid = fork();
   if (cpid > 0) waitpid(cpid, NULL, 0);
-  else execvp(argv[0], argv);
+  else {
+    dup2(open("/dev/null", O_WRONLY), 2);
+    execvp(argv[0], argv);
+  }
 }
 
 static void rpc_parse_statfs (rpc_t *req, char *frame, uint32_t frame_len) {
