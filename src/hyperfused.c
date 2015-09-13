@@ -79,7 +79,7 @@ static pthread_mutex_t write_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t read_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t read_mutex_cond = PTHREAD_COND_INITIALIZER;
 
-static int MULTITHREADED = 1;
+static int MULTITHREADED = 0; // disable for now until single-threaded mode is stable
 
 typedef struct {
   int resolved;
