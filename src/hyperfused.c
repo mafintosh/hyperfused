@@ -72,7 +72,6 @@ static int rpc_fd_out;
 static int rpc_fd_in;
 static id_map_t ids;
 static char* mnt;
-static struct stat mnt_st;
 static pthread_t rpc_loop_thread;
 
 static pthread_mutex_t write_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -298,9 +297,13 @@ inline static int rpc_request (rpc_t *req) {
   if (socket_write(rpc_fd_out, req->buffer, req->buffer_length) < 0) on_critical_error();
   pthread_mutex_unlock(&write_mutex);
 
-  pthread_mutex_lock(&read_mutex);
-  while (!req->resolved) pthread_cond_wait(&read_mutex_cond, &read_mutex);
-  pthread_mutex_unlock(&read_mutex);
+  if (MULTITHREADED) {
+    pthread_mutex_lock(&read_mutex);
+    while (!req->resolved) pthread_cond_wait(&read_mutex_cond, &read_mutex);
+    pthread_mutex_unlock(&read_mutex);
+  } else {
+    rpc_read_next();
+  }
 
   id_map_free(&ids, send_id);
   return req->return_value;
@@ -320,11 +323,6 @@ static void* hyperfuse_init (struct fuse_conn_info *conn) {
 }
 
 static int hyperfuse_getattr (const char *path, struct stat *st) {
-  if (!strcmp(path, "/")) {
-    memcpy(st, &mnt_st, sizeof(struct stat));
-    return 0;
-  }
-
   WITH_PATH(path, 0);
 
   rpc_t req = {
@@ -840,9 +838,10 @@ int main (int argc, char **argv) {
   fusermount(argv[1]);
   mnt = realpath(argv[1], mnt);
   char *addr = argv[2];
+  struct stat mnt_st;
 
   if (mnt == NULL || stat(mnt, &mnt_st) < 0) {
-    fprintf(stderr, "Mountpoint does not exist\n");
+    if (mkdir(mnt, 0777) < 0) fprintf(stderr, "Could not create mountpoint\n");
     return -1;
   }
 
@@ -890,7 +889,7 @@ int main (int argc, char **argv) {
     .releasedir = bitfield_get(methods, HYPERFUSE_RELEASEDIR) ? hyperfuse_releasedir : NULL
   };
 
-  pthread_create(&rpc_loop_thread, NULL, &rpc_loop, NULL);
+  if (MULTITHREADED) pthread_create(&rpc_loop_thread, NULL, &rpc_loop, NULL);
 
   struct fuse_args args = FUSE_ARGS_INIT(argc - 2, argv + 2);
   struct fuse_chan *ch = fuse_mount(mnt, &args);
