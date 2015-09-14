@@ -841,8 +841,11 @@ int main (int argc, char **argv) {
   struct stat mnt_st;
 
   if (mnt == NULL || stat(mnt, &mnt_st) < 0) {
-    if (mkdir(mnt, 0777) < 0) fprintf(stderr, "Could not create mountpoint\n");
-    return -1;
+    if (!mnt) mnt = argv[1];
+    if (mkdir(mnt, 0777) < 0) {
+      fprintf(stderr, "Could not create mountpoint\n");
+      return -1;
+    }
   }
 
   if (connect(addr) < 0) {
