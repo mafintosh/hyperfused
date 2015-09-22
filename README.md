@@ -6,7 +6,7 @@ A networked fuse mounting daemon that runs over tcp or stdin/stdout.
 
 To install it first make sure you have fuse installed.
 
-* On Linux/Ubuntu `sudo apt-get install libfuse-dev`
+* On Linux/Ubuntu `sudo apt-get install libfuse-dev pkg-config`
 * On OSX install [OSXFuse](http://osxfuse.github.com/) and pkg-config, `brew install pkg-config`
 
 Then simply clone this repo and run
