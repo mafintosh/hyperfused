@@ -20,6 +20,6 @@ test: $(SRC_C) $(SRC_H) tests/*.c
 	./$@
 
 clean:
-	rm -f test hyperfused
+	rm -fr test hyperfused
 
 .PHONY: test clean install uninstall
