@@ -1,6 +1,6 @@
 {
   "name": "hyperfused",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "A networked fuse mounting daemon that runs over tcp or stdin/stdout.",
   "directories": {
     "test": "tests"
