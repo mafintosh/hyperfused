@@ -10,7 +10,8 @@
   },
   "scripts": {
     "test": "make test",
-    "install": "make"
+    "install": "make clean && make",
+    "prepublish": "make clean && touch hyperfused"
   },
   "repository": {
     "type": "git",
